@@ -18,7 +18,8 @@ type SessionManager struct {
 	// before it expires. For example, some applications may wish to set this so
 	// there is a timeout after 20 minutes of inactivity. By default IdleTimeout
 	// is not set and there is no inactivity timeout.
-	IdleTimeout time.Duration
+	IdleTimeout         time.Duration
+	IdleTimeoutDebounce time.Duration
 
 	// Lifetime controls the maximum length of time that a session is valid for
 	// before it expires. The lifetime is an 'absolute expiry' which is set when
@@ -215,6 +216,26 @@ func (s *SessionManager) WriteSessionCookie(ctx context.Context, w http.Response
 
 	w.Header().Add("Set-Cookie", cookie.String())
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
+}
+
+func (s *SessionManager) sessionNeedsRefresh(created time.Time) bool {
+	// If there's no idle timeout, no need to refresh.
+	if s.IdleTimeout == 0 {
+		return false
+	}
+
+	// If there's no debounce, we always refresh with an idle timeout.
+	if s.IdleTimeoutDebounce == 0 {
+		return true
+	}
+
+	// If there's no created time, we have to refresh.
+	if created.IsZero() {
+		return true
+	}
+
+	// If we're past the debounce threshold.
+	return time.Now().After(created.Add(s.IdleTimeoutDebounce))
 }
 
 func defaultErrorFunc(w http.ResponseWriter, r *http.Request, err error) {

@@ -168,6 +168,82 @@ func TestIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestIdleTimeoutWithDebounce(t *testing.T) {
+	t.Parallel()
+
+	sessionManager := New()
+	sessionManager.IdleTimeout = 400 * time.Millisecond
+	sessionManager.IdleTimeoutDebounce = 200 * time.Millisecond
+	sessionManager.Lifetime = 5 * time.Second
+
+	mux := http.NewServeMux()
+	mux.Handle("/put", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Log("/put")
+		sessionManager.Put(r.Context(), "foo", "bar")
+	}))
+	mux.Handle("/get", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Log("/get")
+		v := sessionManager.Get(r.Context(), "foo")
+		if v == nil {
+			http.Error(w, "foo does not exist in session", 500)
+			return
+		}
+		_, _ = w.Write([]byte(v.(string)))
+	}))
+
+	ts := newTestServer(t, sessionManager.LoadAndSave(mux))
+	defer ts.Close()
+
+	t.Run("Put and get initial cookie", func(t *testing.T) {
+		h, _ := ts.execute(t, "/put")
+		if h.Get("Set-Cookie") == "" {
+			t.Error("Expected cookie")
+		}
+	})
+
+	t.Run("At 100ms debounce should stop cookie refresh", func(t *testing.T) {
+		time.Sleep(100 * time.Millisecond)
+		h, _ := ts.execute(t, "/get")
+		if h.Get("Set-Cookie") != "" {
+			t.Error("Expected no cookie")
+		}
+	})
+
+	t.Run("At 300ms debounce should be past and get cookie refresh", func(t *testing.T) {
+		time.Sleep(200 * time.Millisecond)
+		h, _ := ts.execute(t, "/get")
+		if h.Get("Set-Cookie") == "" {
+			t.Error("Expected cookie")
+		}
+	})
+
+	t.Run("At 600ms cookie should pass debouce again", func(t *testing.T) {
+		time.Sleep(300 * time.Millisecond)
+		h, body := ts.execute(t, "/get")
+		if body != "bar" {
+			t.Errorf("want %q; got %q", "bar", body)
+		}
+		if h.Get("Set-Cookie") == "" {
+			t.Error("Expected cookie")
+		}
+	})
+
+	t.Run("Wait 500ms to pass idle timeout", func(t *testing.T) {
+		time.Sleep(500 * time.Millisecond) // waited more than the cookie timeout
+		_, body := ts.execute(t, "/get")
+		if body != "foo does not exist in session\n" {
+			t.Errorf("want %q; got %q", "foo does not exist in session\n", body)
+		}
+	})
+
+	t.Run("Put again", func(t *testing.T) {
+		h, _ := ts.execute(t, "/put")
+		if h.Get("Set-Cookie") == "" {
+			t.Error("Expected cookie")
+		}
+	})
+}
+
 func TestDestroy(t *testing.T) {
 	t.Parallel()
 
