@@ -9,8 +9,8 @@ import (
 // Codec is the interface for encoding/decoding session data to and from a byte
 // slice for use by the session store.
 type Codec interface {
-	Encode(deadline time.Time, values map[string]interface{}) ([]byte, error)
-	Decode([]byte) (deadline time.Time, values map[string]interface{}, err error)
+	Encode(created, deadline time.Time, values map[string]interface{}) ([]byte, error)
+	Decode([]byte) (created, deadline time.Time, values map[string]interface{}, err error)
 }
 
 // GobCodec is used for encoding/decoding session data to and from a byte
@@ -18,11 +18,13 @@ type Codec interface {
 type GobCodec struct{}
 
 // Encode converts a session deadline and values into a byte slice.
-func (GobCodec) Encode(deadline time.Time, values map[string]interface{}) ([]byte, error) {
+func (GobCodec) Encode(created, deadline time.Time, values map[string]interface{}) ([]byte, error) {
 	aux := &struct {
+		Created  time.Time
 		Deadline time.Time
 		Values   map[string]interface{}
 	}{
+		Created:  created,
 		Deadline: deadline,
 		Values:   values,
 	}
@@ -36,16 +38,17 @@ func (GobCodec) Encode(deadline time.Time, values map[string]interface{}) ([]byt
 }
 
 // Decode converts a byte slice into a session deadline and values.
-func (GobCodec) Decode(b []byte) (time.Time, map[string]interface{}, error) {
+func (GobCodec) Decode(b []byte) (created, deadline time.Time, values map[string]interface{}, err error) {
 	aux := &struct {
+		Created  time.Time
 		Deadline time.Time
 		Values   map[string]interface{}
 	}{}
 
 	r := bytes.NewReader(b)
 	if err := gob.NewDecoder(r).Decode(&aux); err != nil {
-		return time.Time{}, nil, err
+		return time.Time{}, time.Time{}, nil, err
 	}
 
-	return aux.Deadline, aux.Values, nil
+	return aux.Created, aux.Deadline, aux.Values, nil
 }

@@ -71,14 +71,15 @@ func (s *SessionManager) Load(ctx context.Context, token string) (context.Contex
 		status: Unmodified,
 		token:  token,
 	}
-	if sd.deadline, sd.values, err = s.Codec.Decode(b); err != nil {
+	var created time.Time
+	if created, sd.deadline, sd.values, err = s.Codec.Decode(b); err != nil {
 		return nil, err
 	}
 
 	// Mark the session data as modified if an idle timeout is being used. This
 	// will force the session data to be re-committed to the session store with
 	// a new expiry time.
-	if s.IdleTimeout > 0 {
+	if s.sessionNeedsRefresh(created) {
 		sd.status = Modified
 	}
 
@@ -103,14 +104,16 @@ func (s *SessionManager) Commit(ctx context.Context) (string, time.Time, error) 
 		}
 	}
 
-	b, err := s.Codec.Encode(sd.deadline, sd.values)
+	now := time.Now()
+
+	b, err := s.Codec.Encode(now, sd.deadline, sd.values)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 
 	expiry := sd.deadline
 	if s.IdleTimeout > 0 {
-		ie := time.Now().Add(s.IdleTimeout).UTC()
+		ie := now.Add(s.IdleTimeout).UTC()
 		if ie.Before(expiry) {
 			expiry = ie
 		}
@@ -317,7 +320,7 @@ func (s *SessionManager) MergeSession(ctx context.Context, token string) error {
 		return nil
 	}
 
-	deadline, values, err := s.Codec.Decode(b)
+	_, deadline, values, err := s.Codec.Decode(b)
 	if err != nil {
 		return err
 	}
@@ -550,7 +553,7 @@ func (s *SessionManager) Iterate(ctx context.Context, fn func(context.Context) e
 			token:  token,
 		}
 
-		sd.deadline, sd.values, err = s.Codec.Decode(b)
+		_, sd.deadline, sd.values, err = s.Codec.Decode(b)
 		if err != nil {
 			return err
 		}
