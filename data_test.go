@@ -30,6 +30,10 @@ func TestSessionManager_Load(T *testing.T) {
 	T.Run("happy path", func(t *testing.T) {
 		s := New()
 		s.IdleTimeout = time.Hour * 24
+		var loadCalls []LoadCall
+		s.LoadHook = func(_ context.Context, call LoadCall) {
+			loadCalls = append(loadCalls, call)
+		}
 
 		ctx := context.Background()
 		expected := "example"
@@ -68,6 +72,10 @@ func TestSessionManager_Load(T *testing.T) {
 
 		if expected != actual {
 			t.Errorf("expected %s to equal %s", expected, actual)
+		}
+
+		if len(loadCalls) != 1 {
+			t.Errorf("expected %d to equal %d", 1, len(loadCalls))
 		}
 	})
 
@@ -250,6 +258,10 @@ func TestSessionManager_Commit(T *testing.T) {
 	T.Run("happy path", func(t *testing.T) {
 		s := New()
 		s.IdleTimeout = time.Hour * 24
+		var commitCalls []CommitCall
+		s.CommitHook = func(_ context.Context, call CommitCall) {
+			commitCalls = append(commitCalls, call)
+		}
 
 		expectedToken := "example"
 		expectedExpiry := time.Now().Add(time.Hour)
@@ -271,6 +283,9 @@ func TestSessionManager_Commit(T *testing.T) {
 		}
 		if err != nil {
 			t.Errorf("unexpected error returned: %v", err)
+		}
+		if len(commitCalls) != 1 {
+			t.Errorf("expected %d to equal %d", 1, len(commitCalls))
 		}
 	})
 

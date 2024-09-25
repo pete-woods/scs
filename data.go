@@ -45,13 +45,32 @@ func newSessionData(lifetime time.Duration) *sessionData {
 	}
 }
 
+// LoadCall represents a call to the Load method.
+type LoadCall struct {
+	HasToken     bool
+	FoundSession bool
+	NeedsRefresh bool
+	Created      time.Time
+	Deadline     time.Time
+	Error        error
+}
+
 // Load retrieves the session data for the given token from the session store,
 // and returns a new context.Context containing the session data. If no matching
 // token is found then this will create a new session.
 //
 // Most applications will use the LoadAndSave() middleware and will not need to
 // use this method.
-func (s *SessionManager) Load(ctx context.Context, token string) (context.Context, error) {
+func (s *SessionManager) Load(ctx context.Context, token string) (_ context.Context, err error) {
+	var callData = LoadCall{}
+	defer func() {
+		if s.LoadHook == nil {
+			return
+		}
+		callData.Error = err
+		s.LoadHook(ctx, callData)
+	}()
+
 	if _, ok := ctx.Value(s.contextKey).(*sessionData); ok {
 		return ctx, nil
 	}
@@ -59,8 +78,10 @@ func (s *SessionManager) Load(ctx context.Context, token string) (context.Contex
 	if token == "" {
 		return s.addSessionDataToContext(ctx, newSessionData(s.Lifetime)), nil
 	}
+	callData.HasToken = true
 
 	b, found, err := s.doStoreFind(ctx, token)
+	callData.FoundSession = found
 	if err != nil {
 		return nil, err
 	} else if !found {
@@ -75,15 +96,26 @@ func (s *SessionManager) Load(ctx context.Context, token string) (context.Contex
 	if created, sd.deadline, sd.values, err = s.Codec.Decode(b); err != nil {
 		return nil, err
 	}
+	callData.Created = created
+	callData.Deadline = sd.deadline
 
 	// Mark the session data as modified if an idle timeout is being used. This
 	// will force the session data to be re-committed to the session store with
 	// a new expiry time.
 	if s.sessionNeedsRefresh(created) {
+		callData.NeedsRefresh = true
 		sd.status = Modified
 	}
 
 	return s.addSessionDataToContext(ctx, sd), nil
+}
+
+type CommitCall struct {
+	Error    error
+	NewToken bool
+	Expiry   time.Time
+	Created  time.Time
+	Deadline time.Time
 }
 
 // Commit saves the session data to the session store and returns the session
@@ -91,13 +123,23 @@ func (s *SessionManager) Load(ctx context.Context, token string) (context.Contex
 //
 // Most applications will use the LoadAndSave() middleware and will not need to
 // use this method.
-func (s *SessionManager) Commit(ctx context.Context) (string, time.Time, error) {
+func (s *SessionManager) Commit(ctx context.Context) (_ string, _ time.Time, err error) {
+	var callData = CommitCall{}
+	defer func() {
+		if s.CommitHook == nil {
+			return
+		}
+		callData.Error = err
+		s.CommitHook(ctx, callData)
+	}()
+
 	sd := s.getSessionDataFromContext(ctx)
 
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
 	if sd.token == "" {
+		callData.NewToken = true
 		var err error
 		if sd.token, err = generateToken(); err != nil {
 			return "", time.Time{}, err
@@ -105,6 +147,9 @@ func (s *SessionManager) Commit(ctx context.Context) (string, time.Time, error) 
 	}
 
 	now := time.Now()
+
+	callData.Created = now
+	callData.Deadline = sd.deadline
 
 	b, err := s.Codec.Encode(now, sd.deadline, sd.values)
 	if err != nil {
@@ -118,6 +163,7 @@ func (s *SessionManager) Commit(ctx context.Context) (string, time.Time, error) 
 			expiry = ie
 		}
 	}
+	callData.Expiry = expiry
 
 	if err := s.doStoreCommit(ctx, sd.token, b, expiry); err != nil {
 		return "", time.Time{}, err
