@@ -49,6 +49,12 @@ type SessionManager struct {
 	// HashTokenInStore controls whether or not to store the session token or a hashed version in the store.
 	HashTokenInStore bool
 
+	// LoadHook will be invoked at the end of a call to Load, to allow instrumentation.
+	LoadHook func(ctx context.Context, call LoadCall)
+
+	// CommitHook will be invoked at the end of a call to Commit, to allow instrumentation.
+	CommitHook func(ctx context.Context, call CommitCall)
+
 	// contextKey is the key used to set and retrieve the session data from a
 	// context.Context. It's automatically generated to ensure uniqueness.
 	contextKey contextKey
